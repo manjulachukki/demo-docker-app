@@ -1,0 +1,26 @@
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      hints.enabled: true
+      # Only collect logs from containers that have the label co.elastic.logs/enabled=true
+      templates:
+        - condition:
+            equals:
+              docker.container.labels.co.elastic.logs/enabled: "true"
+          config:
+            - type: container
+              paths:
+                - /var/lib/docker/containers/${data.docker.container.id}/*.log
+              json.keys_under_root: true
+              json.overwrite_keys: true
+              json.message_key: log
+
+processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  - add_host_metadata: ~
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: warning
