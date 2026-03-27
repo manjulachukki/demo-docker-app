@@ -1,272 +1,146 @@
 # demo-docker-app
 
-A lightweight Flask application containerised with Docker and integrated with the **ELK stack** (Elasticsearch + Logstash + Kibana) for centralised, structured logging. Logs are collected from Docker containers by **Filebeat** and shipped through Logstash into Elasticsearch, where they can be explored in Kibana.
+A lightweight Flask application containerised with Docker, integrated with an **external ELK stack** (Elasticsearch + Kibana) for centralised structured logging. Logs are collected from Docker containers by **Filebeat**, processed by **Logstash**, and stored in **Elasticsearch** where they are searchable and visualisable in **Kibana**.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────┐     stdout      ┌──────────┐     beats     ┌──────────┐
-│  Flask App  │ ─── JSON ────▶  │ Filebeat │ ────5044────▶ │ Logstash │
-│  :5000      │                 │          │               │          │
-└─────────────┘                 └──────────┘               └────┬─────┘
-                                                                 │ HTTP
-                                                                 ▼
-                                                        ┌───────────────┐
-                                                        │ Elasticsearch │
-                                                        │    :9200      │
-                                                        └───────┬───────┘
-                                                                │
-                                                                ▼
-                                                        ┌───────────────┐
-                                                        │    Kibana     │
-                                                        │    :5601      │
-                                                        └───────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  This repository                                            │
+│                                                             │
+│  ┌──────────┐  JSON stdout   ┌──────────┐  port 5044       │
+│  │Flask App │ ─────────────▶ │ Filebeat │ ──────────────┐  │
+│  │  :5000   │                │          │               │  │
+│  └──────────┘                └──────────┘               │  │
+│                                                          │  │
+│                              ┌──────────┐  ◀────────────┘  │
+│                              │ Logstash │                   │
+│                              │  :5044   │                   │
+│                              └────┬─────┘                   │
+└───────────────────────────────────┼─────────────────────────┘
+                                    │ HTTPS :9200
+                   ─ ─ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+                   External ELK     │
+                   ┌────────────────▼───────────────────────┐
+                   │  ┌───────────────┐  ┌───────────────┐  │
+                   │  │ Elasticsearch │  │    Kibana     │  │
+                   │  │   es01 :9200  │  │  kib01 :5601  │  │
+                   │  └───────────────┘  └───────────────┘  │
+                   └────────────────────────────────────────┘
 ```
 
-| Service       | Port  | Description                              |
-|---------------|-------|------------------------------------------|
-| Flask App     | 5000  | Web application                          |
-| Elasticsearch | 9200  | Log storage and search engine            |
-| Logstash      | 5044  | Log processing pipeline                  |
-| Kibana        | 5601  | Log visualisation dashboard              |
+Elasticsearch and Kibana run as a **separate external ELK stack** — not inside this repo. Logstash bridges between the two environments by joining both Docker networks.
 
 ---
 
-## Directory Structure
+## Documentation
 
-```
-demo-docker-app/
-├── README.md
-└── demo-app/
-    ├── app.py                          # Flask app with JSON logging
-    ├── Dockerfile
-    ├── docker-compose.yml              # All services (app + ELK)
-    ├── requirements.txt
-    ├── .env                            # ELK_VERSION pin
-    └── elk/
-        ├── logstash/
-        │   └── pipeline/
-        │       └── logstash.conf       # Logstash input → filter → output
-        └── filebeat/
-            └── filebeat.yml            # Filebeat Docker autodiscover config
-```
-
----
-
-## Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) >= 24
-- [Docker Compose](https://docs.docker.com/compose/) >= 2.20 (plugin, not standalone)
-- At least **4 GB of RAM** allocated to Docker (Elasticsearch is memory-hungry)
-
-### Increase virtual memory for Elasticsearch (Linux / WSL2)
-
-Elasticsearch requires a higher `vm.max_map_count`. Run once per boot:
-
-```bash
-sudo sysctl -w vm.max_map_count=262144
-```
-
-To make it permanent:
-
-```bash
-echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-```
+| Document | What it covers |
+|---|---|
+| [App Configuration](./docs/app-configuration.md) | Flask app, Dockerfile, JSON logging, routes, how to extend the app |
+| [ELK Configuration](./docs/elk-configuration.md) | Filebeat, Logstash pipeline, Docker networks, credentials setup, cert setup, troubleshooting |
 
 ---
 
 ## Quick Start
 
+### Prerequisites
+
+1. Docker and Docker Compose installed
+2. External ELK stack running (`es01` and `kib01` containers on the `elastic` Docker network)
+3. The `elastic` Docker network exists: `docker network ls | grep elastic`
+
+> For ELK stack setup, see the [elk-setup repository](https://github.com/cloud-prakhar/elk-setup).
+
+### One-time local setup
+
 ```bash
-# 1. Clone the repository
-git clone <repo-url>
-cd demo-docker-app/demo-app
+cd demo-app/
 
-# 2. (Optional) Change the ELK version in .env
-#    All four ELK services must use the same version.
-cat .env
+# 1. Copy the CA certificate from the running es01 container
+mkdir -p elk/certs
+docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt elk/certs/http_ca.crt
 
-# 3. Build and start all services
-docker compose up --build -d
+# 2. Create the .env file with your Elasticsearch password
+#    (use only alphanumeric characters in the password)
+cat > .env << 'EOF'
+ELASTIC_PASSWORD=<your-elastic-password>
+EOF
+```
 
-# 4. Check that every service is healthy
+### Start the app
+
+```bash
+docker compose up -d --build
+```
+
+### Verify
+
+```bash
+# All three containers running
 docker compose ps
 
-# 5. Verify the Flask app is running
-curl http://localhost:5000/
+# Flask app responding
 curl http://localhost:5000/health
 
-# 6. Open Kibana
-#    Navigate to http://localhost:5601 in your browser
-```
+# Logstash pipeline started
+docker compose logs logstash | grep "Pipelines running"
 
-> First startup takes 2–3 minutes while Elasticsearch initialises.
-
----
-
-## Viewing Logs in Kibana
-
-### Create a Data View
-
-1. Open **http://localhost:5601**
-2. Go to **Stack Management → Data Views → Create data view**
-3. Set **Index pattern** to `flask-app-*`
-4. Set **Timestamp field** to `@timestamp`
-5. Click **Save data view to Kibana**
-
-### Explore Logs
-
-- Go to **Discover** (left sidebar)
-- Select the `flask-app-*` data view
-- Use KQL to filter, e.g.:
-  ```
-  level: "INFO" and endpoint: "/health"
-  ```
-
-### Useful fields
-
-| Field           | Description                         |
-|-----------------|-------------------------------------|
-| `level`         | Log level (INFO, WARNING, ERROR)    |
-| `log_message`   | Human-readable log message          |
-| `endpoint`      | Flask route that was hit            |
-| `http_method`   | HTTP method (GET, POST, …)          |
-| `client_ip`     | Remote IP address                   |
-| `service`       | Always `flask-demo-app`             |
-| `@timestamp`    | Event time                          |
-
----
-
-## Common Commands
-
-### Start / Stop
-
-```bash
-# Start all services in the background
-docker compose up -d
-
-# Stop all services (keeps volumes)
-docker compose down
-
-# Stop and remove volumes (wipes Elasticsearch data)
-docker compose down -v
-```
-
-### Build & Rebuild
-
-```bash
-# Rebuild only the Flask app image (e.g. after code changes)
-docker compose up --build app -d
-
-# Force a full rebuild of all images
-docker compose build --no-cache
-```
-
-### View Logs
-
-```bash
-# All services (streamed)
-docker compose logs -f
-
-# Flask app only
-docker compose logs -f app
-
-# Logstash only
-docker compose logs -f logstash
-
-# Filebeat only
-docker compose logs -f filebeat
-```
-
-### Service Status & Health
-
-```bash
-# Show running containers and health status
-docker compose ps
-
-# Check Elasticsearch cluster health directly
-curl http://localhost:9200/_cluster/health?pretty
-
-# List indices created by Logstash
-curl http://localhost:9200/_cat/indices?v
-```
-
-### Scale / Restart a Single Service
-
-```bash
-docker compose restart logstash
-docker compose restart filebeat
+# Logs reaching Elasticsearch (wait ~30 seconds after first request)
+curl --cacert ~/ELK/http_ca.crt \
+  -u "elastic:<your-elastic-password>" \
+  "https://localhost:9200/_cat/indices/flask-app-*?v"
 ```
 
 ---
 
-## Changing the ELK Version
+## Project Structure
 
-Edit `.env`:
-
-```dotenv
-ELK_VERSION=8.14.0
 ```
-
-Then recreate the ELK containers:
-
-```bash
-docker compose up -d --force-recreate elasticsearch logstash kibana filebeat
+demo-docker-app/
+├── README.md
+├── .gitignore
+├── docs/
+│   ├── app-configuration.md    ← Flask app deep-dive
+│   └── elk-configuration.md    ← ELK pipeline deep-dive
+└── demo-app/
+    ├── app.py                  ← Flask application
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── docker-compose.yml      ← app + logstash + filebeat
+    ├── .env                    ← NOT in git — contains password
+    └── elk/
+        ├── certs/              ← NOT in git — contains TLS cert
+        │   └── http_ca.crt
+        ├── filebeat/
+        │   └── filebeat.yml
+        └── logstash/
+            └── pipeline/
+                └── logstash.conf
 ```
-
-> All four services (Elasticsearch, Logstash, Kibana, Filebeat) **must** run the same version.
 
 ---
 
-## Troubleshooting
+## Security Notes
 
-### Elasticsearch exits immediately
+The following files are excluded from git and must be created locally by each developer:
 
-Most likely `vm.max_map_count` is too low. Run:
+| File | How to create |
+|---|---|
+| `demo-app/.env` | See Quick Start above |
+| `demo-app/elk/certs/http_ca.crt` | `docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt demo-app/elk/certs/http_ca.crt` |
 
-```bash
-sudo sysctl -w vm.max_map_count=262144
-```
-
-### No logs appearing in Kibana
-
-1. Check Filebeat is running and targeting the right containers:
-   ```bash
-   docker compose logs filebeat
-   ```
-2. Check Logstash received events:
-   ```bash
-   docker compose logs logstash
-   ```
-3. Confirm the index was created in Elasticsearch:
-   ```bash
-   curl http://localhost:9200/_cat/indices?v
-   ```
-4. Make sure the Flask app container has the label `co.elastic.logs/enabled=true` (set in `docker-compose.yml`).
-
-### Port conflicts
-
-If ports 5000, 5044, 9200, or 5601 are already in use, edit the `ports` section of `docker-compose.yml` for the affected service and restart.
+**Never commit these files.** Verify with: `git ls-files | grep -E "\.env|certs"` — should return nothing.
 
 ---
 
-## Logging in the Flask App
+## Ports
 
-The app uses [`python-json-logger`](https://github.com/madzak/python-json-logger) to emit structured JSON on stdout. Every request is logged via a `@before_request` hook, and each route adds context fields.
-
-Example log line (pretty-printed):
-
-```json
-{
-  "asctime": "2026-03-25T12:00:00",
-  "name": "app",
-  "levelname": "INFO",
-  "message": "Incoming request",
-  "method": "GET",
-  "path": "/health",
-  "remote_addr": "172.18.0.1"
-}
-```
+| Service | Port | Notes |
+|---|---|---|
+| Flask App | 5000 | `http://localhost:5000` |
+| Logstash | 5044 | Beats input — Filebeat only |
+| Elasticsearch | 9200 | External (`es01`) |
+| Kibana | 5601 | External (`kib01`) — `http://localhost:5601` |

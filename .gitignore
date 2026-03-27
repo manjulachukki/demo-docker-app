@@ -41,6 +41,12 @@ elk/kibana/data/
 elk/filebeat/data/
 elk/**/*.log
 
+# ELK certificates — machine-specific, never commit
+# Each Elasticsearch install generates its own unique CA cert.
+# Copy it locally using: docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt demo-app/elk/certs/http_ca.crt
+demo-app/elk/certs/
+elk/certs/
+
 # OS
 .DS_Store
 Thumbs.db
