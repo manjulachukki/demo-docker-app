@@ -39,8 +39,9 @@ Elasticsearch and Kibana run as a **separate external ELK stack** — not inside
 
 | Document | What it covers |
 |---|---|
-| [App Configuration](./docs/app-configuration.md) | Flask app, Dockerfile, JSON logging, routes, how to extend the app |
-| [ELK Configuration](./docs/elk-configuration.md) | Filebeat, Logstash pipeline, Docker networks, credentials setup, cert setup, troubleshooting |
+| [App Configuration](./demo-app/docs/app-configuration.md) | Flask app, Dockerfile, JSON logging, routes, how to extend the app |
+| [ELK Configuration](./demo-app/docs/elk-configuration.md) | Filebeat, Logstash pipeline, Docker networks, credentials setup, cert setup, troubleshooting |
+| [Teardown & Cleanup](./demo-app/docs/teardown.md) | Step-by-step removal of containers, images, networks, local files, and Elasticsearch data |
 
 ---
 
