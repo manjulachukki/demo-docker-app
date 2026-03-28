@@ -1,0 +1,159 @@
+# ── docker-compose.yml ────────────────────────────────────────────────────────
+# Orchestrates three services for the notes-app:
+#   1. app       — the Flask notes application (port 5001)
+#   2. filebeat  — ships container logs to Logstash
+#   3. logstash  — processes logs and forwards to Elasticsearch
+#
+# Port offsets from demo-app to allow both apps to run simultaneously:
+#   demo-app  → Flask :5000, Logstash Beats :5044
+#   notes-app → Flask :5001, Logstash Beats :5045
+#
+# Networks:
+#   notes_elk (internal) — app ↔ filebeat ↔ logstash (isolated bridge)
+#   elastic   (external) — logstash → es01:9200 (shared with ELK stack)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Flask Notes Application ─────────────────────────────────────────────────
+  app:
+    # Build from the Dockerfile in this directory
+    build: .
+
+    container_name: notes-app
+
+    ports:
+      # Map host port 5001 to container port 5001.
+      # Access the app at: http://localhost:5001
+      - "5001:5001"
+
+    environment:
+      # Flask settings injected at runtime — no hardcoded values in code.
+      # Configurable per deployment without rebuilding the image.
+      - FLASK_ENV=production
+      - RATE_LIMIT=10       # max requests per IP per time window
+      - RATE_WINDOW=60      # time window in seconds
+
+    labels:
+      # Filebeat autodiscovery labels — tell Filebeat to collect logs from
+      # this container and parse them as JSON.
+      #
+      # co.elastic.logs/enabled: "true"
+      #   → opt this container IN to Filebeat collection (other containers
+      #     without this label are ignored).
+      #
+      # json.keys_under_root: "true"
+      #   → promote JSON fields to top-level instead of nesting under "json."
+      #     e.g.  json.level → level
+      #
+      # json.overwrite_keys: "true"
+      #   → if a Filebeat built-in field (e.g. "message") conflicts with a
+      #     JSON field, let the JSON field win.
+      - "co.elastic.logs/enabled=true"
+      - "co.elastic.logs/json.keys_under_root=true"
+      - "co.elastic.logs/json.overwrite_keys=true"
+
+    networks:
+      - notes_elk  # internal network — reachable by filebeat/logstash
+
+    # Restart the container automatically unless explicitly stopped.
+    restart: unless-stopped
+
+  # ── Filebeat ─────────────────────────────────────────────────────────────────
+  # Filebeat is a lightweight log shipper.
+  # It watches Docker container log files on the host and forwards them to
+  # Logstash over the Beats protocol (port 5045).
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:9.3.2
+
+    container_name: notes-filebeat
+
+    # Run as root so Filebeat can read Docker socket and container log files.
+    # Docker container logs live in /var/lib/docker/containers/ and are
+    # owned by root on the host.
+    user: root
+
+    volumes:
+      # filebeat.yml — our custom Filebeat configuration (read-only).
+      - ./elk/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+
+      # Docker container log files — Filebeat tails these to collect logs.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+
+      # Docker socket — required for autodiscovery (Filebeat queries Docker API
+      # to read container metadata like labels and container names).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    # Filebeat is strict about file permissions for security.
+    # If filebeat.yml is group/world writable, Filebeat refuses to start.
+    # This command fixes the permissions before starting Filebeat.
+    command: >
+      sh -c "chmod go-w /usr/share/filebeat/filebeat.yml &&
+             filebeat -e"
+
+    networks:
+      - notes_elk  # must be on same network as logstash to reach it
+
+    depends_on:
+      - app  # start app first so logs exist when filebeat starts
+
+    restart: unless-stopped
+
+  # ── Logstash ─────────────────────────────────────────────────────────────────
+  # Logstash receives log events from Filebeat (Beats protocol),
+  # applies transformations (JSON parsing, field renaming, timestamp parsing),
+  # and forwards structured documents to Elasticsearch.
+  logstash:
+    image: docker.elastic.co/logstash/logstash:9.3.2
+
+    container_name: notes-logstash
+
+    ports:
+      # Expose Beats input port to the internal network.
+      # Filebeat sends logs here. 5045 (not 5044) to avoid conflict with demo-app.
+      - "5045:5045"
+
+    volumes:
+      # Logstash pipeline config — defines input, filter, and output stages.
+      - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+
+      # CA certificate — required to verify Elasticsearch's TLS certificate.
+      # Must be copied locally first:
+      #   docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt elk/certs/http_ca.crt
+      - ./elk/certs/http_ca.crt:/usr/share/logstash/certs/http_ca.crt:ro
+
+    environment:
+      # Inject the Elastic password from the .env file into the container.
+      # Logstash pipeline uses ${ELASTIC_PASSWORD} to authenticate to ES.
+      #
+      # IMPORTANT: Docker Compose substitutes ${ELASTIC_PASSWORD} in this YAML
+      # from the .env file, then passes the resolved value into the container.
+      # The container itself sees ELASTIC_PASSWORD=<actual-value>.
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+
+      # Tune JVM heap for Logstash. Reduce on low-memory machines.
+      # Rule of thumb: do not exceed 50% of available RAM.
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+
+    networks:
+      - notes_elk  # receive from filebeat
+      - elastic    # forward to es01:9200
+
+    depends_on:
+      - filebeat
+
+    restart: unless-stopped
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+
+  # Internal bridge network — isolates app + filebeat + logstash from the host.
+  # Traffic on this network stays within this compose project.
+  notes_elk:
+    driver: bridge
+
+  # External network shared with the ELK stack (es01, kib01).
+  # Must exist before running: docker network ls | grep elastic
+  # Created when you started the ELK stack in elk-setup.
+  elastic:
+    external: true

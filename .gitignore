@@ -43,8 +43,11 @@ elk/**/*.log
 
 # ELK certificates — machine-specific, never commit
 # Each Elasticsearch install generates its own unique CA cert.
-# Copy it locally using: docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt demo-app/elk/certs/http_ca.crt
+# Copy it locally:
+#   demo-app:  docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt demo-app/elk/certs/http_ca.crt
+#   notes-app: docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt notes-app/elk/certs/http_ca.crt
 demo-app/elk/certs/
+notes-app/elk/certs/
 elk/certs/
 
 # OS

@@ -1,0 +1,70 @@
+# ── filebeat.yml ──────────────────────────────────────────────────────────────
+# Filebeat configuration for the notes-app.
+#
+# Filebeat is a lightweight shipper that watches Docker container log files
+# and forwards log lines to Logstash for processing.
+#
+# Flow:
+#   Docker container stdout/stderr
+#     → /var/lib/docker/containers/<id>/<id>-json.log  (written by Docker)
+#       → Filebeat autodiscovery (reads based on container labels)
+#         → Logstash :5045  (Beats protocol)
+#           → Elasticsearch (final storage)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Filebeat Inputs ───────────────────────────────────────────────────────────
+# Autodiscovery dynamically configures inputs based on running containers.
+# Without autodiscovery we would need to know container IDs in advance,
+# which changes every time the container restarts.
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      # Hints-based autodiscovery: Filebeat reads special container labels
+      # (co.elastic.logs/*) to decide how to collect and parse logs.
+      # Labels are set in docker-compose.yml under the 'app' service.
+      hints.enabled: true
+
+      # Only collect logs from containers that explicitly opt in.
+      # Containers WITHOUT the label co.elastic.logs/enabled=true are ignored.
+      # This prevents Filebeat from accidentally collecting its own logs or
+      # logs from unrelated containers.
+      hints.default_config.enabled: false
+
+# ── Processors ────────────────────────────────────────────────────────────────
+# Processors transform or enrich events before they are sent to the output.
+processors:
+
+  # add_docker_metadata enriches each log event with Docker metadata:
+  #   container.id, container.name, container.image.name, etc.
+  # This is useful for filtering and dashboards in Kibana.
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+
+  # add_host_metadata adds host-level fields:
+  #   host.name, host.os.name, host.architecture, etc.
+  # Useful when running multiple hosts and you want to know the source.
+  - add_host_metadata: ~
+
+# ── Output ────────────────────────────────────────────────────────────────────
+# Send all collected log events to Logstash.
+# Logstash applies further transformation (field renaming, timestamp parsing)
+# before indexing into Elasticsearch.
+#
+# We output to Logstash (not directly to Elasticsearch) because Logstash
+# provides a richer filter pipeline (grok, mutate, date, etc.).
+output.logstash:
+  # notes-logstash is the container name defined in docker-compose.yml.
+  # Both filebeat and logstash are on the notes_elk network, so the
+  # container name resolves via Docker DNS.
+  hosts: ["notes-logstash:5045"]
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Filebeat's own internal log level.
+# Options: error, warning, info, debug
+# Use "debug" temporarily when troubleshooting pipeline issues.
+logging.level: info
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+# Disable internal monitoring metrics.
+# Enable this if you want Filebeat's own health metrics in Elasticsearch.
+monitoring.enabled: false
