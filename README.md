@@ -70,11 +70,15 @@ Both apps share the same `elastic` Docker network and Elasticsearch/Kibana insta
 
 ## Prerequisites
 
+> **Important:** Before following Steps 1–8 below, complete the one-time setup steps documented in the [Applications Reference](#applications-reference) section for your chosen app (`demo-app` or `notes-app`). Those steps cover copying the CA certificate and creating the `.env` file, which are required before the stack can start.
+
 Before starting, ensure:
 
 1. **Docker Desktop** is installed and running (Linux containers mode on Windows)
 2. **External ELK stack** is deployed — `es01` (Elasticsearch) and `kib01` (Kibana) containers must exist
 3. The **`elastic` Docker network** must exist (created by the ELK stack setup)
+4. **CA certificate** copied from `es01` into `elk/certs/http_ca.crt` — see [Step 3 — Copy the CA Certificate](#step-3--copy-the-ca-certificate)
+5. **`.env` file** created with `ELASTIC_PASSWORD` — see [Step 4 — Create the .env File](#step-4--create-the-env-file)
 
 Verify the ELK stack is healthy:
 ```bash
